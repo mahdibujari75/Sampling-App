@@ -2,4 +2,5 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/h346019/public_html/
-    - /bin/cp -R -f . $DEPLOYPATH
+    - /bin/cp -R -f index.php $DEPLOYPATH
+    - /bin/cp -R -f app $DEPLOYPATH
