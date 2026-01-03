@@ -7,6 +7,9 @@
 /************************************************************
  * SECTION 1 — Auth Guard
  ************************************************************/
+if (!defined('APP_ROOT')) {
+  define('APP_ROOT', realpath(__DIR__ . '/..')); // /app
+}
 require_once APP_ROOT . "/includes/auth.php";
 require_admin(); // Admin-only
 

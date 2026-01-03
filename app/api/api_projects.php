@@ -1,13 +1,13 @@
 <?php
-// public_html/api_projects.php
-require_once __DIR__ . "/auth.php";
+// public_html/app/api/api_projects.php
+require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . "/lib_db.php";
 
 header("Content-Type: application/json; charset=utf-8");
 
 $method = $_SERVER["REQUEST_METHOD"];
+require_login();
 $user = current_user();
-if (!$user) { http_response_code(401); echo json_encode(["ok"=>false,"error"=>"Not logged in"]); exit; }
 
 function is_admin($u){ return ($u["role"] ?? "") === "Admin"; }
 function is_observer($u){ return ($u["role"] ?? "") === "Observer"; }

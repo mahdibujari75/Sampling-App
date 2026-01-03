@@ -1,3 +1,7 @@
+<?php
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_login();
+?>
 <form id="attForm" enctype="multipart/form-data">
   <input name="customerSlug" value="borna">
   <input name="projectCode" value="302">

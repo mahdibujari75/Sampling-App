@@ -70,7 +70,10 @@ if (!isset($routes[$route])) {
   exit;
 }
 
-// protect everything here (login/logout remain separate real files)
-require_login();
+$publicRoutes = ['login', 'login.php', 'logout', 'logout.php'];
+if (!in_array($route, $publicRoutes, true)) {
+  // protect everything here (login/logout remain separate real files)
+  require_login();
+}
 
 require $routes[$route];
