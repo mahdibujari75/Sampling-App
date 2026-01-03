@@ -24,6 +24,7 @@ if (!defined('APP_ROOT')) {
   define('APP_ROOT', realpath(__DIR__ . '/..')); // /app
 }
 require_once APP_ROOT . "/includes/auth.php";
+require_once APP_ROOT . "/includes/acl.php";
 require_login();
 
 /************************************************************
@@ -165,10 +166,9 @@ function append_activity_log(array &$project, array $event): void {
  * SECTION 7 — Current User + Role
  ************************************************************/
 $me = current_user();
-$role = (string)($me["role"] ?? "Observer");
-$isAdmin = ($role === "Admin");
-$isObserver = ($role === "Observer");
-$isClient = ($role === "Client");
+$role = current_role();
+$isAdmin = is_admin();
+$isCustomer = has_role("Customer");
 $myUsername = (string)($me["username"] ?? "");
 
 /************************************************************
@@ -280,11 +280,7 @@ if ($action === "set_status") {
 /************************************************************
  * SECTION 11 — Filter Projects by Role
  ************************************************************/
-$visible = [];
-foreach ($projects as $p) {
-  if ($isAdmin || $isObserver) { $visible[] = $p; continue; }
-  if ($isClient && (string)($p["customerUsername"] ?? "") === $myUsername) $visible[] = $p;
-}
+$visible = apply_scope_filter_to_project_list_query($projects);
 
 /************************************************************
  * SECTION 12 — Group Subprojects into One Row
@@ -329,9 +325,7 @@ $viewId = (int)($_GET["id"] ?? 0);
 $viewProject = null;
 
 if ($viewId > 0) {
-  foreach ($visible as $p) {
-    if ((int)($p["id"] ?? 0) === $viewId) { $viewProject = $p; break; }
-  }
+  $viewProject = require_subproject_scope($viewId);
 }
 
 /************************************************************

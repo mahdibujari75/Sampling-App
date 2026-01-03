@@ -1,6 +1,7 @@
 <?php
 // public_html/app/api/api_projects.php
 require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/acl.php';
 require_once __DIR__ . "/lib_db.php";
 
 header("Content-Type: application/json; charset=utf-8");
@@ -9,39 +10,21 @@ $method = $_SERVER["REQUEST_METHOD"];
 require_login();
 $user = current_user();
 
-function is_admin($u){ return ($u["role"] ?? "") === "Admin"; }
-function is_observer($u){ return ($u["role"] ?? "") === "Observer"; }
-
 if ($method === "GET") {
-  // List all projects (Admin/Observer) or filtered later (Client)
-  $root = db_projects_root();
+  $projects = apply_scope_filter_to_project_list_query(acl_load_projects());
   $out = [];
 
-  if (is_dir($root)) {
-    foreach (scandir($root) as $cust) {
-      if ($cust === "." || $cust === "..") continue;
-      $custPath = $root . "/" . $cust;
-      if (!is_dir($custPath)) continue;
-
-      foreach (scandir($custPath) as $code) {
-        if ($code === "." || $code === "..") continue;
-        $projPath = $custPath . "/" . $code;
-        if (!is_dir($projPath)) continue;
-
-        $pj = $projPath . "/project.json";
-        $meta = db_read_json($pj, null);
-        if (!$meta) continue;
-
-        // For now: only Admin/Observer exist; so return all
-        $out[] = [
-          "customerSlug" => $cust,
-          "projectCode" => $code,
-          "projectName" => $meta["projectName"] ?? "",
-          "updatedAt" => $meta["updatedAt"] ?? "",
-          "pathKey" => "{$cust}/{$code}"
-        ];
-      }
-    }
+  foreach ($projects as $p) {
+    $slug = (string)($p["customerSlug"] ?? ($p["customerUsername"] ?? ""));
+    $slug = preg_replace('/[^a-zA-Z0-9\\-_]/', '', $slug);
+    $code = (string)($p["code"] ?? "");
+    $out[] = [
+      "customerSlug" => $slug,
+      "projectCode" => $code,
+      "projectName" => $p["projectName"] ?? "",
+      "updatedAt" => $p["updatedAt"] ?? "",
+      "pathKey" => "{$slug}/{$code}"
+    ];
   }
 
   echo json_encode(["ok"=>true, "projects"=>$out]);
@@ -49,7 +32,7 @@ if ($method === "GET") {
 }
 
 if ($method === "POST") {
-  if (!is_admin($user)) { http_response_code(403); echo json_encode(["ok"=>false,"error"=>"Admin only"]); exit; }
+  require_role(["Admin"]);
 
   $payload = json_decode(file_get_contents("php://input"), true);
   if (!is_array($payload)) { http_response_code(400); echo json_encode(["ok"=>false,"error"=>"Invalid JSON"]); exit; }

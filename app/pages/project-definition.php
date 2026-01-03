@@ -93,14 +93,15 @@ function require_csrf(string $expected): void {
 }
 
 /************************************************************
- * SECTION 6 — Load Clients (from users.json)
- * Only role == "Client" appears in dropdown.
+ * SECTION 6 — Load Customers (from users.json)
+ * Only role == "Customer" (or legacy Client) appears in dropdown.
  ************************************************************/
 $users = load_json_array($USERS_FILE);
 
 $clients = [];
 foreach ($users as $u) {
-  if (($u["role"] ?? "") === "Client") {
+  $roleVal = (string)($u["role"] ?? "");
+  if ($roleVal === "Customer" || $roleVal === "Client") {
     $uname = trim((string)($u["username"] ?? ""));
     if ($uname !== "") $clients[] = $uname;
   }
@@ -266,7 +267,7 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
 
   <?php if (count($clients) === 0): ?>
     <div class="flash err" style="margin-top:10px;">
-      No Client users found in users.json. Create Client users first, then return here.
+      No Customer users found in users.json. Create Customer users first, then return here.
     </div>
   <?php endif; ?>
 
@@ -282,14 +283,14 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
       </div>
 
       <div>
-        <label>Customer (Client Username)</label>
+        <label>Customer (Username)</label>
         <select name="customerUsername" required>
           <option value="" selected disabled>Select a customer...</option>
           <?php foreach ($clients as $c): ?>
             <option value="<?= h($c) ?>"><?= h($c) ?></option>
           <?php endforeach; ?>
         </select>
-        <div class="hint">Projects will be linked to the selected Client username.</div>
+        <div class="hint">Projects will be linked to the selected customer username.</div>
       </div>
 
       <div>
