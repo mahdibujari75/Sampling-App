@@ -192,7 +192,7 @@ function render_header(string $title, string $subtitle = ""): void {
   $canSeeInventory = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D']) : $isAdmin;
 
   $hasAdministrationPage = file_exists(APP_ROOT . '/pages/administration.php');
-  $canSeeAdministration = $hasAdministrationPage && $isAdmin;
+  $canSeeAdministration = $hasAdministrationPage && ($isAdmin || has_role('Manager'));
 
   $badgeCounts = [
     'Waiting for my confirmation' => 0,
