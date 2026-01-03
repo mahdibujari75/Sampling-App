@@ -18,6 +18,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/acl.php';
+
 
 // includes/theme.php
 // Central theme: colors, CSS, shared UI utilities.
@@ -159,11 +161,9 @@ function theme_css(string $pageTitle = ""): void {
 function render_header(string $title, string $subtitle = ""): void {
   $subtitle = $subtitle ?: "Portal";
 
-  $u = function_exists('current_user') ? current_user() : null;
-  $role = is_array($u) ? ($u['role'] ?? '') : '';
-  $isAdmin = ($role === 'Admin');
-  $isObserver = ($role === 'Observer');
-  $isStaff = ($isAdmin || $isObserver);
+  $role = function_exists('current_role') ? current_role() : '';
+  $isAdmin = function_exists('is_admin') ? is_admin() : ($role === 'Admin');
+  $isStaff = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D']) : $isAdmin;
 
   ?>
   <!DOCTYPE html>
@@ -206,4 +206,3 @@ function render_footer(): void {
   </html>
   <?php
 }
-

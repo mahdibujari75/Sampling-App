@@ -19,6 +19,7 @@ if (!defined("APP_ROOT")) {
 }
 
 require_once APP_ROOT . "/includes/auth.php";
+require_once APP_ROOT . "/includes/acl.php";
 require_login();
 require_once APP_ROOT . "/includes/layout.php";
 
@@ -61,15 +62,13 @@ function production_db_file(): string {
 }
 
 $me = current_user();
-$role = (string)($me["role"] ?? "Observer");
-$isAdmin = ($role === "Admin");
-$isObserver = ($role === "Observer");
+$role = current_role();
+$isAdmin = is_admin();
+$isInternal = has_role(["Admin","Manager","Office","R&D"]);
 $myUsername = (string)($me["username"] ?? "");
 
-if (!$isAdmin && !$isObserver) {
-  http_response_code(403);
-  echo "Access denied.";
-  exit;
+if (!$isInternal) {
+  acl_access_denied();
 }
 
 /* =========================

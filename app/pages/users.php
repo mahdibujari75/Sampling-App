@@ -49,8 +49,15 @@ function next_user_id(array $users): int {
 
 function normalize_role(string $r): string {
   $r = trim($r);
-  $allowed = ["Admin","Observer","Client"];
-  return in_array($r, $allowed, true) ? $r : "Observer";
+  $rUpper = strtoupper($r);
+  if ($rUpper === "CLIENT") return "Customer";
+  if ($rUpper === "CUSTOMER") return "Customer";
+  if ($rUpper === "MANAGER") return "Manager";
+  if ($rUpper === "OFFICE") return "Office";
+  if ($rUpper === "R&D" || $rUpper === "R AND D" || $rUpper === "RANDD") return "R&D";
+  if ($rUpper === "ADMIN") return "Admin";
+  if ($rUpper === "OBSERVER") return "Observer";
+  return "Customer";
 }
 
 function username_exists(array $users, string $username, ?int $excludeId = null): bool {
@@ -136,7 +143,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         "username" => $username,
         "password" => $password, // NOTE: Plain text per your current approach
         "role" => $role,
-        // Only meaningful for Client, but kept for all to avoid breaking schema
+        // Only meaningful for Customer, but kept for all to avoid breaking schema
         "customerSlug" => $customerSlug,
         "allowedProjects" => $allowedArr,
       ];
@@ -255,7 +262,7 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
 <div class="card">
   <div class="row">
     <h2>Create User</h2>
-    <div class="hint">Add Admin / Observer / Client</div>
+    <div class="hint">Add Admin / Manager / Office / R&D / Customer</div>
   </div>
 
   <form method="post" style="margin-top:10px;">
@@ -277,8 +284,10 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
       <div>
         <label>Role</label>
         <select name="role">
-          <option value="Client">Client</option>
-          <option value="Observer" selected>Observer</option>
+          <option value="Customer">Customer</option>
+          <option value="Manager">Manager</option>
+          <option value="Office">Office</option>
+          <option value="R&D">R&D</option>
           <option value="Admin">Admin</option>
         </select>
       </div>
@@ -327,7 +336,7 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
         <?php
           $id = (int)($u["id"] ?? 0);
           $username = (string)($u["username"] ?? "");
-          $role = (string)($u["role"] ?? "Observer");
+          $role = normalize_role((string)($u["role"] ?? "Customer"));
           $customerSlug = (string)($u["customerSlug"] ?? "");
           $allowedCSV = allowed_projects_to_csv($u["allowedProjects"] ?? []);
         ?>
@@ -381,8 +390,10 @@ if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
                   <div>
                     <label>Role</label>
                     <select name="role">
-                      <option value="Client" <?= $role==="Client"?"selected":"" ?>>Client</option>
-                      <option value="Observer" <?= $role==="Observer"?"selected":"" ?>>Observer</option>
+                      <option value="Customer" <?= $role==="Customer"?"selected":"" ?>>Customer</option>
+                      <option value="Manager" <?= $role==="Manager"?"selected":"" ?>>Manager</option>
+                      <option value="Office" <?= $role==="Office"?"selected":"" ?>>Office</option>
+                      <option value="R&D" <?= $role==="R&D"?"selected":"" ?>>R&D</option>
                       <option value="Admin" <?= $role==="Admin"?"selected":"" ?>>Admin</option>
                     </select>
                   </div>

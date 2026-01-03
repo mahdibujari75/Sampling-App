@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/auth_guard.php'; // must start session + provide require_login()
+require_once __DIR__ . '/../includes/acl.php';
 
 require_login(); // blocks if not logged in
 
@@ -64,6 +65,9 @@ if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
 $fileTmp  = $_FILES['file']['tmp_name'];
 $fileSize = (int)($_FILES['file']['size'] ?? 0);
 if ($fileSize <= 0) json_out(['ok' => false, 'error' => 'Empty upload.'], 400);
+
+// Scope enforcement (project ownership)
+$project = require_project_scope_by_slug_code($customerSlug, $projectCode, $subType);
 
 // -------- Paths --------
 $baseDir = __DIR__ . '/database/projects';

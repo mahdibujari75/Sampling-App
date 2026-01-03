@@ -19,6 +19,7 @@ if (!defined("APP_ROOT")) {
 }
 
 require_once APP_ROOT . "/includes/auth.php";
+require_once APP_ROOT . "/includes/acl.php";
 require_login();
 require_once APP_ROOT . "/includes/layout.php";
 
@@ -73,33 +74,26 @@ function public_root(): string {
 }
 
 $me = current_user();
-$role = (string)($me["role"] ?? "Observer");
-$isAdmin = ($role === "Admin");
-$isObserver = ($role === "Observer");
-$isClient = ($role === "Client");
+$role = current_role();
+$isAdmin = is_admin();
+$isInternal = has_role(["Admin","Manager","Office","R&D"]);
 $myUsername = (string)($me["username"] ?? "");
 
-if (!$isAdmin && !$isObserver) {
-  http_response_code(403);
-  echo "Access denied.";
-  exit;
+if (!$isInternal) {
+  acl_access_denied();
 }
 
 $PROJECTS_FILE = defined("PROJECTS_DB_FILE") ? PROJECTS_DB_FILE : (APP_ROOT . "/database/projects.json");
 
-function is_project_visible(array $p, bool $isAdmin, bool $isObserver, bool $isClient, string $myUsername): bool {
-  if ($isAdmin || $isObserver) return true;
-  if ($isClient && (string)($p["customerUsername"] ?? "") === $myUsername) return true;
-  return false;
+function is_project_visible(array $p): bool {
+  return acl_user_can_access_project($p);
 }
 
-function get_visible_projects(string $PROJECTS_FILE, bool $isAdmin, bool $isObserver, bool $isClient, string $myUsername): array {
-  $projects = load_json_array($PROJECTS_FILE);
+function get_visible_projects(string $PROJECTS_FILE): array {
+  $projects = apply_scope_filter_to_project_list_query(load_json_array($PROJECTS_FILE));
   $out = [];
   foreach ($projects as $p) {
     if (!is_array($p)) continue;
-    if (!is_project_visible($p, $isAdmin, $isObserver, $isClient, $myUsername)) continue;
-
     
 
     $step = (int)($p["step"] ?? ($p["currentStep"] ?? ($p["stepIndex"] ?? 0)));
@@ -124,13 +118,11 @@ $type = strtoupper(trim((string)($p["type"] ?? "")));
   return $out;
 }
 
-function find_project_by_id(string $PROJECTS_FILE, int $id, bool $isAdmin, bool $isObserver, bool $isClient, string $myUsername): ?array {
-  $projects = load_json_array($PROJECTS_FILE);
+function find_project_by_id(string $PROJECTS_FILE, int $id): ?array {
+  $projects = apply_scope_filter_to_project_list_query(load_json_array($PROJECTS_FILE));
   foreach ($projects as $p) {
     if (!is_array($p)) continue;
     if ((int)($p["id"] ?? 0) !== $id) continue;
-    if (!is_project_visible($p, $isAdmin, $isObserver, $isClient, $myUsername)) return null;
-
     $type = strtoupper(trim((string)($p["type"] ?? "")));
     $codeRaw = trim((string)($p["code"] ?? ""));
     $subCode = normalize_subcode($codeRaw, $type);
@@ -226,14 +218,14 @@ function next_day_no(array $plans): int {
 $action = (string)($_GET["action"] ?? "");
 if ($action === "list_projects") {
   header("Content-Type: application/json; charset=utf-8");
-  echo json_encode(["ok" => true, "projects" => get_visible_projects($PROJECTS_FILE, $isAdmin, $isObserver, $isClient, $myUsername)]);
+  echo json_encode(["ok" => true, "projects" => get_visible_projects($PROJECTS_FILE)]);
   exit;
 }
 
 if ($action === "list_sf") {
   header("Content-Type: application/json; charset=utf-8");
   $pid = (int)($_GET["projectId"] ?? 0);
-  $proj = find_project_by_id($PROJECTS_FILE, $pid, $isAdmin, $isObserver, $isClient, $myUsername);
+  $proj = find_project_by_id($PROJECTS_FILE, $pid);
   if (!$proj) {
     http_response_code(404);
     echo json_encode(["ok" => false, "error" => "Project not found."]);
@@ -246,7 +238,7 @@ if ($action === "list_sf") {
 if ($action === "get_sf") {
   $pid = (int)($_GET["projectId"] ?? 0);
   $file = safe_filename((string)($_GET["file"] ?? ""));
-  $proj = find_project_by_id($PROJECTS_FILE, $pid, $isAdmin, $isObserver, $isClient, $myUsername);
+  $proj = find_project_by_id($PROJECTS_FILE, $pid);
   if (!$proj) {
     http_response_code(404);
     echo "Project not found.";
@@ -424,7 +416,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") ==
     exit;
   }
 
-  $proj = find_project_by_id($PROJECTS_FILE, $pid, $isAdmin, $isObserver, $isClient, $myUsername);
+  $proj = find_project_by_id($PROJECTS_FILE, $pid);
   if (!$proj) {
     http_response_code(404);
     echo json_encode(["ok" => false, "error" => "Project not found."]);

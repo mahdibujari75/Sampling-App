@@ -9,19 +9,16 @@ if (!defined('APP_ROOT')) {
 }
 
 require_once APP_ROOT . '/includes/auth.php';
+require_once APP_ROOT . '/includes/acl.php';
 require_login();
 require_once APP_ROOT . '/includes/layout.php';
 
 $me = current_user();
-$role = (string)($me['role'] ?? 'Observer');
-$isAdmin = ($role === 'Admin');
-$isObserver = ($role === 'Observer');
-$isStaff = ($isAdmin || $isObserver);
+$role = current_role();
+$isStaff = has_role(['Admin','Manager','Office','R&D']);
 
 if (!$isStaff) {
-  http_response_code(403);
-  echo 'Access denied.';
-  exit;
+  acl_access_denied();
 }
 
 render_header('Production', $role);

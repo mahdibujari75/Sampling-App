@@ -9,6 +9,7 @@ if (!defined("APP_ROOT")) {
 }
 
 require_once APP_ROOT . "/includes/auth.php";
+require_once APP_ROOT . "/includes/acl.php";
 require_once APP_ROOT . "/includes/layout.php";
 require_login();
 
@@ -72,53 +73,64 @@ function referrer_project_id(): int {
 }
 
 $me = current_user();
-$role = (string)($me["role"] ?? "Observer");
-$isAdmin = ($role === "Admin");
-$isObserver = ($role === "Observer");
-$isClient = ($role === "Client");
+$role = current_role();
 $myUsername = (string)($me["username"] ?? "");
 
 $PROJECTS_FILE = defined("PROJECTS_DB_FILE") ? PROJECTS_DB_FILE : (APP_ROOT . "/database/projects.json");
 
-function find_visible_project_by_id(array $projects, int $id, bool $isAdmin, bool $isObserver, bool $isClient, string $myUsername): ?array {
-  foreach ($projects as $p) {
-    if ((int)($p["id"] ?? 0) !== $id) continue;
-    if ($isAdmin || $isObserver) return $p;
-    if ($isClient && (string)($p["customerUsername"] ?? "") === $myUsername) return $p;
-    return null;
+function subcode_type(string $subCode): string {
+  $parts = explode("-", $subCode);
+  $t = strtoupper(trim($parts[1] ?? ""));
+  if ($t === "" && preg_match('/([CFO])$/i', $subCode, $m)) {
+    $t = strtoupper($m[1]);
   }
-  return null;
+  return $t;
 }
 
-function resolve_ctx(int $id, string $PROJECTS_FILE, bool $isAdmin, bool $isObserver, bool $isClient, string $myUsername): array {
-  $ctx = [
-    "projectId"   => 0,
-    "clientSlug"  => "",
-    "type"        => "",
-    "codeRaw"     => "",
-    "subCode"     => "",
-    "projectCode" => "",
-    "baseDir"     => "",
-  ];
-  if ($id <= 0) return $ctx;
-
-  $projects = load_json_array($PROJECTS_FILE);
-  $p = find_visible_project_by_id($projects, $id, $isAdmin, $isObserver, $isClient, $myUsername);
-  if (!$p) return $ctx;
-
+function project_ctx_from_record(array $p): array {
   $type = strtoupper(trim((string)($p["type"] ?? "")));
   $codeRaw = trim((string)($p["code"] ?? ""));
   $subCode = normalize_subcode($codeRaw, $type);
 
-  $ctx["projectId"]   = $id;
-  $ctx["clientSlug"]  = safe_slug((string)($p["customerUsername"] ?? ""));
-  $ctx["type"]        = $type;
-  $ctx["codeRaw"]     = $codeRaw;
-  $ctx["subCode"]     = safe_code($subCode);
-  $ctx["projectCode"] = extract_projectcode_3digits($subCode);
-  $ctx["baseDir"]     = (string)($p["baseDir"] ?? "");
+  return [
+    "projectId"   => (int)($p["id"] ?? 0),
+    "clientSlug"  => safe_slug((string)($p["customerSlug"] ?? ($p["customerUsername"] ?? ""))),
+    "type"        => $type,
+    "codeRaw"     => $codeRaw,
+    "subCode"     => safe_code($subCode),
+    "projectCode" => extract_projectcode_3digits($subCode),
+    "baseDir"     => (string)($p["baseDir"] ?? ""),
+  ];
+}
 
-  return $ctx;
+function ctx_from_scope(int $projectId, string $customerSlug = "", string $subCode = ""): array {
+  $empty = [
+    "projectId" => 0,
+    "clientSlug" => "",
+    "type" => "",
+    "codeRaw" => "",
+    "subCode" => "",
+    "projectCode" => "",
+    "baseDir" => "",
+  ];
+
+  if ($projectId > 0) {
+    $project = require_subproject_scope($projectId);
+    return project_ctx_from_record($project);
+  }
+
+  $customerSlug = safe_slug($customerSlug);
+  $subCode = safe_code($subCode);
+  if ($customerSlug === "" || $subCode === "") return $empty;
+
+  $type = subcode_type($subCode);
+  $codeRaw = preg_replace('/\\D+/', '', $subCode);
+  if ($type === "" || $codeRaw === "") {
+    acl_access_denied();
+  }
+
+  $project = require_project_scope_by_slug_code($customerSlug, $codeRaw, $type);
+  return project_ctx_from_record($project);
 }
 
 function sff_dir_from_ctx(array $ctx): string {
@@ -172,20 +184,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") ==
   $projectId = (int)($_POST["projectId"] ?? 0);
   $projectCode = (string)($_POST["projectCode"] ?? "");
 
-  if ($projectId > 0) {
-    $ctx = resolve_ctx($projectId, $PROJECTS_FILE, $isAdmin, $isObserver, $isClient, $myUsername);
-    if (!$projectCode) $projectCode = (string)($ctx["projectCode"] ?? "");
-  } else {
-    $ctx = [
-      "projectId" => 0,
-      "clientSlug" => safe_slug((string)($_POST["clientSlug"] ?? "")),
-      "subCode" => safe_code((string)($_POST["subCode"] ?? "")),
-      "baseDir" => "",
-      "type" => "",
-      "codeRaw" => "",
-      "projectCode" => preg_replace('/\D/', '', $projectCode),
-    ];
-  }
+  $ctx = ctx_from_scope(
+    $projectId,
+    (string)($_POST["clientSlug"] ?? ""),
+    (string)($_POST["subCode"] ?? "")
+  );
+  if (!$projectCode) $projectCode = (string)($ctx["projectCode"] ?? "");
 
   $dir = sff_dir_from_ctx($ctx);
   $subTag = subtag_from_subcode((string)($ctx["subCode"] ?? ""));
@@ -201,19 +205,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") ==
 
   $projectId = (int)($_POST["projectId"] ?? 0);
 
-  if ($projectId > 0) {
-    $ctx = resolve_ctx($projectId, $PROJECTS_FILE, $isAdmin, $isObserver, $isClient, $myUsername);
-  } else {
-    $ctx = [
-      "projectId" => 0,
-      "clientSlug" => safe_slug((string)($_POST["clientSlug"] ?? "")),
-      "subCode" => safe_code((string)($_POST["subCode"] ?? "")),
-      "baseDir" => "",
-      "type" => "",
-      "codeRaw" => "",
-      "projectCode" => "",
-    ];
-  }
+  $ctx = ctx_from_scope(
+    $projectId,
+    (string)($_POST["clientSlug"] ?? ""),
+    (string)($_POST["subCode"] ?? "")
+  );
 
   $fileName = safe_filename((string)($_POST["fileName"] ?? ""));
 
@@ -250,7 +246,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") ==
 
 $viewId = (int)($_GET["id"] ?? 0);
 if ($viewId <= 0) $viewId = referrer_project_id();
-$ctx = resolve_ctx($viewId, $PROJECTS_FILE, $isAdmin, $isObserver, $isClient, $myUsername);
+$ctx = ctx_from_scope($viewId);
 
 $sffDir = sff_dir_from_ctx($ctx);
 $subTag = subtag_from_subcode((string)($ctx["subCode"] ?? ""));
