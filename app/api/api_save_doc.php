@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/auth.php'; // must start session + provide require_login()
+require_once __DIR__ . '/../includes/auth_guard.php'; // must start session + provide require_login()
 
 require_login(); // blocks if not logged in
 
