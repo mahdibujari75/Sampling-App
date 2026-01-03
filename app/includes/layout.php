@@ -76,6 +76,27 @@ function theme_css(string $pageTitle = ""): void {
   }
   .nav a:hover{ border-color: rgba(122,168,116,0.7); }
 
+  .nav{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  .nav-links{ display:flex; align-items:center; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .nav-chip{
+    text-decoration:none; color:var(--muted);
+    padding:8px 12px; border-radius:999px; border:1px solid var(--line);
+    background:rgba(255,255,255,0.5);
+    display:inline-block;
+    cursor:default;
+  }
+
+  .nav-badges{ display:flex; align-items:center; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .nav-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    padding:6px 10px; border-radius:999px; border:1px solid var(--line);
+    background:rgba(255,255,255,0.85); font-size:12px; color:var(--text);
+  }
+  .nav-badge-count{
+    background:var(--matcha); color:#fff; border-radius:10px; padding:2px 8px;
+    font-weight:700; min-width:24px; text-align:center; display:inline-block;
+  }
+
   .card{
     margin-top:14px;
     padding:16px;
@@ -163,7 +184,22 @@ function render_header(string $title, string $subtitle = ""): void {
 
   $role = function_exists('current_role') ? current_role() : '';
   $isAdmin = function_exists('is_admin') ? is_admin() : ($role === 'Admin');
-  $isStaff = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D']) : $isAdmin;
+  $canSeeDashboard = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D','Customer']) : $isAdmin;
+  $canSeeDocuments = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D','Customer']) : $isAdmin;
+  $canSeeProduction = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D','Customer']) : $isAdmin;
+
+  $hasInventoryPage = file_exists(APP_ROOT . '/pages/inventory.php');
+  $canSeeInventory = function_exists('has_role') ? has_role(['Admin','Manager','Office','R&D']) : $isAdmin;
+
+  $hasAdministrationPage = file_exists(APP_ROOT . '/pages/administration.php');
+  $canSeeAdministration = $hasAdministrationPage && $isAdmin;
+
+  $badgeCounts = [
+    'Waiting for my confirmation' => 0,
+    'Ready to issue' => 0,
+    'Production tasks' => 0,
+  ];
+  // TODO(PAGE-IMP-03): implement count query once doc/production metadata tables exist
 
   ?>
   <!DOCTYPE html>
@@ -183,18 +219,44 @@ function render_header(string $title, string $subtitle = ""): void {
         </div>
 
         <div class="nav">
-          <a href="/">Home</a>
-          <a href="/projects">Projects</a>
+          <div class="nav-links">
+            <?php if ($canSeeDashboard): ?>
+              <a href="/">Dashboard</a>
+            <?php endif; ?>
 
-          <?php if ($isStaff): ?>
-            <a href="/production">Production</a>
-          <?php endif; ?>
+            <?php if ($canSeeDocuments): ?>
+              <a href="/projects">Documents Register</a>
+            <?php endif; ?>
 
-          <?php if ($isAdmin): ?>
-            <a href="/administration">Administration</a>
-          <?php endif; ?>
+            <?php if ($canSeeProduction): ?>
+              <a href="/production">Production</a>
+            <?php endif; ?>
 
-<a href="/logout">Logout</a>
+            <?php if ($canSeeInventory): ?>
+              <?php if ($hasInventoryPage): ?>
+                <a href="/inventory">Inventory</a>
+              <?php else: ?>
+                <span class="nav-chip">Inventory</span>
+              <?php endif; ?>
+            <?php endif; ?>
+
+            <?php if ($canSeeAdministration): ?>
+              <a href="/administration">Administration</a>
+            <?php endif; ?>
+
+            <a href="/logout">Logout</a>
+            <span class="nav-chip"><?= htmlspecialchars($role ?: 'Unknown', ENT_QUOTES, "UTF-8") ?></span>
+          </div>
+
+          <div class="nav-badges">
+            <?php foreach ($badgeCounts as $label => $count): ?>
+              <span class="nav-badge">
+                <span><?= htmlspecialchars($label, ENT_QUOTES, "UTF-8") ?></span>
+                <span class="nav-badge-count"><?= (int)$count ?></span>
+              </span>
+            <?php endforeach; ?>
+          </div>
+
         </div>
       </div>
   <?php
