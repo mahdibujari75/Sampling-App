@@ -168,6 +168,7 @@ function append_activity_log(array &$project, array $event): void {
 $me = current_user();
 $role = current_role();
 $isAdmin = is_admin();
+$isManager = has_role("Manager");
 $isCustomer = has_role("Customer");
 $myUsername = (string)($me["username"] ?? "");
 
@@ -329,6 +330,45 @@ if ($viewId > 0) {
 }
 
 /************************************************************
+ * SECTION 13B — Project View (?projectId=project_id)
+ ************************************************************/
+$projectViewId = (int)($_GET["projectId"] ?? 0);
+$projectView = null;
+$projectViewSubs = [];
+$projectSnapshotDocs = [];
+
+if ($projectViewId > 0) {
+  $projectView = require_project_scope($projectViewId);
+
+  $projCustomer = (string)($projectView["customerUsername"] ?? "");
+  $projCode = (string)($projectView["code"] ?? "");
+  $projName = (string)($projectView["projectName"] ?? "");
+
+  foreach ($visible as $sp) {
+    if (
+      (string)($sp["customerUsername"] ?? "") === $projCustomer &&
+      (string)($sp["code"] ?? "") === $projCode &&
+      (string)($sp["projectName"] ?? "") === $projName
+    ) {
+      $projectViewSubs[] = $sp;
+    }
+  }
+
+  if (empty($projectViewSubs)) {
+    $projectViewSubs[] = $projectView;
+  }
+
+  // Snapshot doc types (placeholder until doc metadata table exists)
+  $projectSnapshotDocs = [
+    ["label" => "PI", "latest" => "—", "status" => "—", "note" => "TODO(PAGE-IMP-05): query latest PI version/status"],
+    ["label" => "SCF", "latest" => "—", "status" => "—", "note" => "TODO(PAGE-IMP-05): query latest SCF version/status"],
+    ["label" => "SFF", "latest" => "—", "status" => "—", "note" => "TODO(PAGE-IMP-05): query latest SFF version/status"],
+    ["label" => "Attachments (Incoming)", "latest" => "—", "status" => "—", "note" => "TODO(PAGE-IMP-05): query latest incoming attachment status"],
+    ["label" => "Attachments (Outgoing)", "latest" => "—", "status" => "—", "note" => "TODO(PAGE-IMP-05): query latest outgoing attachment status"],
+  ];
+}
+
+/************************************************************
  * SECTION 14 — Render
  ************************************************************/
 render_header("Projects", $role);
@@ -479,6 +519,108 @@ function toggleGroup(rowId){
     </tbody>
   </table>
 </div>
+
+<?php if ($projectView): ?>
+  <?php
+    $projType = (string)($projectView["type"] ?? "");
+    $projMode = (string)($projectView["mode"] ?? "");
+    $projCode = (string)($projectView["code"] ?? "");
+    $projName = (string)($projectView["projectName"] ?? "");
+    $projCustomer = (string)($projectView["customerUsername"] ?? "");
+  ?>
+  <div class="card">
+    <div class="row" style="align-items:flex-start;">
+      <div>
+        <h2>Project View</h2>
+        <div class="hint">Project summary with subprojects and snapshot.</div>
+      </div>
+      <?php if ($isAdmin || $isManager): ?>
+        <div class="p-btnbar">
+          <button class="btn" type="button" disabled title="TODO(PAGE-IMP-05): Create subproject action">Create subproject</button>
+          <button class="btn btn-ghost" type="button" disabled title="TODO(PAGE-IMP-05): Assign roles action">Assign roles</button>
+          <button class="btn btn-ghost" type="button" disabled title="TODO(PAGE-IMP-05): State management entry">State management</button>
+        </div>
+      <?php endif; ?>
+    </div>
+
+    <div class="p-kv" style="margin-top:10px;">
+      <div class="k">Project</div><div class="v p-wrap"><?= h($projName) ?></div>
+      <div class="k">Customer</div><div class="v p-wrap"><?= h($projCustomer) ?></div>
+      <div class="k">Code</div><div class="v"><?= h($projCode) ?></div>
+      <div class="k">Type</div><div class="v"><?= h($projType) ?></div>
+      <div class="k">Mode</div><div class="v"><?= h($projMode) ?></div>
+    </div>
+
+    <div class="row" style="align-items:flex-start; gap:20px; margin-top:16px; flex-wrap:wrap;">
+      <div style="flex:2; min-width:320px;">
+        <div class="row" style="align-items:center; gap:10px;">
+          <h3 class="p-mini-title" style="margin:0;">Subprojects</h3>
+          <div class="hint"><?= count($projectViewSubs) ?> item(s)</div>
+        </div>
+        <table style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:90px;">Type</th>
+              <th style="width:160px;">State</th>
+              <th style="width:200px;">Stream</th>
+              <th style="width:160px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($projectViewSubs as $sp): ?>
+              <?php
+                $sid = (int)($sp["id"] ?? 0);
+                $stype = (string)($sp["type"] ?? "");
+                $sstate = (string)($sp["state"] ?? "");
+                $sstream = (string)($sp["stream"] ?? "");
+              ?>
+              <tr>
+                <td><span class="pill"><?= h($stype !== "" ? $stype : "-") ?></span></td>
+                <td><?= h($sstate !== "" ? $sstate : "-") ?></td>
+                <td><?= h($sstream !== "" ? $sstream : "-") ?></td>
+                <td>
+                  <?php if ($sid > 0): ?>
+                    <a class="btn btn-ghost" href="/projects?id=<?= h((string)$sid) ?>" style="text-decoration:none;">Open subproject workspace</a>
+                  <?php else: ?>
+                    <button class="btn btn-ghost" type="button" disabled title="Subproject id missing">Open subproject workspace</button>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="flex:1; min-width:260px;">
+        <div class="row" style="align-items:center; gap:10px;">
+          <h3 class="p-mini-title" style="margin:0;">Snapshot</h3>
+          <div class="hint">Latest version/status per doc type</div>
+        </div>
+        <table style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:140px;">Doc Type</th>
+              <th style="width:120px;">Latest</th>
+              <th style="width:120px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($projectSnapshotDocs as $doc): ?>
+              <tr>
+                <td><?= h((string)$doc["label"]) ?></td>
+                <td><?= h((string)$doc["latest"]) ?></td>
+                <td>
+                  <?= h((string)$doc["status"]) ?>
+                  <div class="hint" style="font-size:11px;"><?= h((string)$doc["note"]) ?></div>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+<?php endif; ?>
 
 <?php if ($viewProject): ?>
   <?php
