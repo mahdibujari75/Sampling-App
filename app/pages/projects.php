@@ -147,6 +147,19 @@ function latest_files(string $dir, int $limit = 8): array {
   return array_map(fn($x) => $x["name"], $items);
 }
 
+function state_equals(string $state, string $target): bool {
+  return strtoupper(trim($state)) === strtoupper(trim($target));
+}
+
+function public_root(): string {
+  $root = realpath(APP_ROOT . "/..");
+  return $root ?: (APP_ROOT . "/..");
+}
+
+function production_db_file_path(): string {
+  return rtrim(public_root(), "/") . "/database/production/production_days.json";
+}
+
 /************************************************************
  * SECTION 6 — Activity Log (stored in projects.json)
  ************************************************************/
@@ -202,11 +215,16 @@ $flash_ok = "";
 $flash_err = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-  if (!$isAdmin) { http_response_code(403); echo "Forbidden"; exit; }
-  require_csrf($CSRF);
-
   $action = trim((string)($_POST["action"] ?? ""));
   $id = (int)($_POST["id"] ?? 0);
+
+  $adminOnlyActions = ["step_delta","set_workflow","set_status"];
+  $isStateTransition = ($action === "transition_state");
+
+  if (in_array($action, $adminOnlyActions, true) && !$isAdmin) { http_response_code(403); echo "Forbidden"; exit; }
+  if ($isStateTransition && !($isAdmin || $isManager)) { http_response_code(403); echo "Forbidden"; exit; }
+
+  require_csrf($CSRF);
 
   $idx = find_project_index_by_id($projects, $id);
   if ($idx < 0) {
@@ -274,6 +292,91 @@ if ($action === "set_status") {
       save_json_array_atomic($PROJECTS_FILE, $projects);
       $projects = load_json_array($PROJECTS_FILE);
       $flash_ok = "Status updated.";
+    }
+    elseif ($action === "transition_state") {
+      $currentState = (string)($projects[$idx]["state"] ?? "");
+      $stream = (string)($projects[$idx]["stream"] ?? "");
+      $mode = (string)($projects[$idx]["mode"] ?? "");
+      $piRequiredFlag = $projects[$idx]["piRequired"] ?? null;
+      $piRequired = ($piRequiredFlag !== null) ? (bool)$piRequiredFlag : (stripos($mode, "external") !== false);
+
+      $targetState = trim((string)($_POST["target_state"] ?? ""));
+      $normalizedCurrent = strtoupper(trim($currentState));
+      $normalizedTarget = strtoupper(trim($targetState));
+
+      $docMetadataAvailable = false; // TODO(PAGE-IMP-06): query doc metadata table for Issued/Locked statuses.
+      $productionFile = production_db_file_path();
+      $productionDataAvailable = is_file($productionFile);
+      $openProductionDays = [];
+
+      if ($productionDataAvailable) {
+        $plans = load_json_array($productionFile);
+        if (!is_array($plans)) {
+          $productionDataAvailable = false;
+        } else {
+          foreach ($plans as $plan) {
+            if (!is_array($plan)) continue;
+            $entries = is_array($plan["entries"] ?? null) ? $plan["entries"] : [];
+            $hasMatch = false;
+            foreach ($entries as $en) {
+              if (!is_array($en)) continue;
+              if ((int)($en["projectId"] ?? 0) === $id) { $hasMatch = true; break; }
+            }
+            if ($hasMatch) {
+              $planStatus = (string)($plan["status"] ?? "Open");
+              if (strtolower($planStatus) !== "closed") {
+                $openProductionDays[] = [
+                  "jalaliDate" => (string)($plan["jalaliDate"] ?? ""),
+                  "dayNo" => (int)($plan["dayNo"] ?? 0),
+                  "status" => $planStatus,
+                ];
+              }
+            }
+          }
+        }
+      }
+
+      $blockers = [];
+
+      if ($normalizedCurrent === "CONFIRMED" && $normalizedTarget === "EXECUTION") {
+        if (!$docMetadataAvailable) {
+          $blockers[] = "Cannot validate required Issued/Locked docs (doc metadata not available)";
+        } else {
+          // TODO(PAGE-IMP-06): enforce SCF/SFF/PI Issued/Locked checks when doc metadata is available.
+        }
+      } elseif ($normalizedCurrent === "EXECUTION" && $normalizedTarget === "COMPLETED") {
+        if (!$productionDataAvailable) {
+          $blockers[] = "Cannot validate open production days (production tables not available)";
+        } elseif (count($openProductionDays)) {
+          $labels = array_map(function($p){
+            $dn = (int)($p["dayNo"] ?? 0);
+            $date = (string)($p["jalaliDate"] ?? "");
+            $st = (string)($p["status"] ?? "");
+            return trim(($dn>0?("Day ".$dn):"") . ($date!==""?(" ".$date):"") . ($st!==""?(" (".$st.")"):""));
+          }, $openProductionDays);
+          $blockers[] = "Production days still open: " . implode("; ", array_filter($labels));
+        }
+      } else {
+        $blockers[] = "Invalid transition.";
+      }
+
+      if (count($blockers)) {
+        $flash_err = implode(" ", $blockers);
+      } else {
+        $projects[$idx]["state"] = $targetState;
+        $projects[$idx]["updatedAt"] = $now;
+
+        append_activity_log($projects[$idx], [
+          "ts" => $now,
+          "by" => $actor,
+          "type" => "STATE_UPDATE",
+          "msg" => "State changed from {$currentState} to {$targetState} by {$role}.",
+        ]);
+
+        save_json_array_atomic($PROJECTS_FILE, $projects);
+        $projects = load_json_array($PROJECTS_FILE);
+        $flash_ok = "State updated.";
+      }
     }
   }
 }
@@ -684,6 +787,80 @@ function toggleGroup(rowId){
         ["label" => "Production Log",  "url" => "/production_log?id="  . $pid],
       ];
     } 
+
+    $state = (string)($viewProject["state"] ?? "");
+    $stateNormalized = strtoupper(trim($state));
+    $stream = (string)($viewProject["stream"] ?? "");
+    $mode = (string)($viewProject["mode"] ?? "");
+    $piRequiredFlag = $viewProject["piRequired"] ?? null;
+    $piRequired = ($piRequiredFlag !== null) ? (bool)$piRequiredFlag : (stripos($mode, "external") !== false);
+
+    $docMetadataAvailable = false; // TODO(PAGE-IMP-06): Hook to doc metadata table for latest/status lookups.
+    $docMetadataNote = "TODO(PAGE-IMP-06): Doc metadata not available; cannot list issued versions.";
+
+    $requiredDocs = [];
+    if (stripos($stream, "compound") !== false) $requiredDocs[] = "SCF";
+    if (stripos($stream, "film") !== false) $requiredDocs[] = "SFF";
+    if ($piRequired) $requiredDocs[] = "PI";
+
+    $productionFile = production_db_file_path();
+    $productionDataAvailable = is_file($productionFile);
+    $productionDataNote = $productionDataAvailable ? "" : "TODO(PAGE-IMP-06): Production tables not available.";
+    $linkedProductionDays = [];
+    $openProductionDays = [];
+
+    if ($productionDataAvailable) {
+      $plans = load_json_array($productionFile);
+      if (!is_array($plans)) {
+        $productionDataAvailable = false;
+        $productionDataNote = "TODO(PAGE-IMP-06): Cannot read production_days.json.";
+      } else {
+        foreach ($plans as $plan) {
+          if (!is_array($plan)) continue;
+          $entries = is_array($plan["entries"] ?? null) ? $plan["entries"] : [];
+          $hasMatch = false;
+          foreach ($entries as $en) {
+            if (!is_array($en)) continue;
+            if ((int)($en["projectId"] ?? 0) === $pid) { $hasMatch = true; break; }
+          }
+          if ($hasMatch) {
+            $rec = [
+              "jalaliDate" => (string)($plan["jalaliDate"] ?? ""),
+              "dayNo" => (int)($plan["dayNo"] ?? 0),
+              "status" => (string)($plan["status"] ?? "Open"),
+            ];
+            $linkedProductionDays[] = $rec;
+            if (strtolower($rec["status"]) !== "closed") {
+              $openProductionDays[] = $rec;
+            }
+          }
+        }
+      }
+    }
+
+    $confirmedBlockers = [];
+    $executionBlockers = [];
+
+    if ($stateNormalized === "CONFIRMED") {
+      if (!$docMetadataAvailable) {
+        $confirmedBlockers[] = "Cannot validate required Issued/Locked docs (doc metadata not available)";
+      }
+    }
+    if ($stateNormalized === "EXECUTION") {
+      if (!$productionDataAvailable) {
+        $executionBlockers[] = "Cannot validate open production days (production tables not available)";
+      } elseif (count($openProductionDays)) {
+        foreach ($openProductionDays as $pday) {
+          $lbl = "Production day " . ((int)($pday["dayNo"] ?? 0) ?: "");
+          $date = (string)($pday["jalaliDate"] ?? "");
+          $statusLabel = (string)($pday["status"] ?? "");
+          $executionBlockers[] = trim($lbl . ($date ? (" on " . $date) : "") . ($statusLabel ? (" (" . $statusLabel . ")") : ""));
+        }
+      }
+    }
+
+    $canTransitionToExecution = ($isAdmin || $isManager) && $stateNormalized === "CONFIRMED" && count($confirmedBlockers) === 0;
+    $canTransitionToCompleted = ($isAdmin || $isManager) && $stateNormalized === "EXECUTION" && count($executionBlockers) === 0;
 ?>
 
   <!-- =======================================================
@@ -710,6 +887,245 @@ function toggleGroup(rowId){
     <div class="p-kv" style="margin-top:12px;">
       <div class="k">Customer</div><div class="v"><?= h((string)($viewProject["customerUsername"] ?? "")) ?></div>
       <div class="k">Status</div><div class="v"><?= h($status) ?></div>
+    </div>
+
+    <div class="row" style="align-items:flex-start; gap:12px; margin-top:12px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:220px;">
+        <div class="hint" style="font-weight:700;">State</div>
+        <div class="pill" style="display:inline-block; margin-top:4px;"><?= h($state !== "" ? $state : "-") ?></div>
+        <div class="hint" style="margin-top:6px;">Mode: <?= h($mode !== "" ? $mode : "—") ?></div>
+      </div>
+      <div style="flex:1; min-width:220px;">
+        <div class="hint" style="font-weight:700;">Stream</div>
+        <div class="pill" style="display:inline-block; margin-top:4px;"><?= h($stream !== "" ? $stream : "-") ?></div>
+        <div class="hint" style="margin-top:6px;">
+          Required issued docs: <?= h(count($requiredDocs) ? implode(", ", $requiredDocs) : "None") ?>
+        </div>
+      </div>
+      <div style="flex:1.4; min-width:260px;">
+        <div class="hint" style="font-weight:700;">Active issued versions</div>
+        <div class="hint" style="margin-top:6px; color:var(--muted);"><?= h($docMetadataNote) ?></div>
+      </div>
+    </div>
+
+    <div class="row" style="align-items:flex-start; gap:12px; margin-top:14px; flex-wrap:wrap;">
+      <div class="card" style="flex:1.6; min-width:320px; margin-top:0;">
+        <div class="row">
+          <h2 class="p-mini-title">Document Board</h2>
+          <div class="hint">Latest per doc type + actions</div>
+        </div>
+        <table style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:140px;">Doc Type</th>
+              <th style="width:120px;">Latest</th>
+              <th style="width:120px;">Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php
+              $docRows = [
+                ["label" => "PI", "action" => true],
+                ["label" => $techDocLabel, "action" => true],
+                ["label" => "Attachments (Incoming)", "action" => false],
+                ["label" => "Attachments (Outgoing)", "action" => false],
+              ];
+            ?>
+            <?php foreach ($docRows as $row): ?>
+              <tr>
+                <td><?= h((string)$row["label"]) ?></td>
+                <td>—</td>
+                <td>—</td>
+                <td>
+                  <?php if (!empty($row["action"])): ?>
+                    <?php if ($isAdmin || $isManager): ?>
+                      <button class="btn btn-ghost" type="button" disabled title="TODO(PAGE-IMP-06): Wire to Issue/Lock once doc metadata is available">Issue/Lock</button>
+                    <?php else: ?>
+                      <button class="btn btn-ghost" type="button" disabled title="Manager/Admin only">Issue/Lock</button>
+                    <?php endif; ?>
+                  <?php else: ?>
+                    <span class="hint">No actions available.</span>
+                  <?php endif; ?>
+                  <div class="hint" style="font-size:11px;"><?= h($docMetadataNote) ?></div>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="flex:1; min-width:260px; margin-top:0;">
+        <div class="row">
+          <h2 class="p-mini-title">Approvals</h2>
+          <div class="hint">Proposed waiting; Confirmed ready to issue</div>
+        </div>
+        <div class="hint" style="margin-top:8px;">No approval metadata available.</div>
+        <div class="hint" style="font-size:11px;"><?= h($docMetadataNote) ?></div>
+        <table style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:200px;">Queue</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Proposed</td>
+              <td>
+                —
+                <div class="hint" style="font-size:11px;">TODO(PAGE-IMP-06): load proposed docs awaiting confirmation.</div>
+              </td>
+            </tr>
+            <tr>
+              <td>Confirmed</td>
+              <td>
+                —
+                <div class="hint" style="font-size:11px;">TODO(PAGE-IMP-06): load confirmed docs ready to issue.</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="row" style="align-items:flex-start; gap:12px; margin-top:12px; flex-wrap:wrap;">
+      <div class="card" style="flex:1; min-width:320px; margin-top:0;">
+        <div class="row">
+          <h2 class="p-mini-title">Version History</h2>
+          <div class="hint">Full timeline per doc type</div>
+        </div>
+        <div class="hint" style="margin-top:8px;">No version history available.</div>
+        <div class="hint" style="font-size:11px;"><?= h($docMetadataNote) ?></div>
+        <table style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:160px;">Doc Type</th>
+              <th>Timeline</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>PI</td>
+              <td><div class="hint" style="font-size:11px;">TODO(PAGE-IMP-06): render PI version history from metadata.</div></td>
+            </tr>
+            <tr>
+              <td><?= h($techDocLabel) ?></td>
+              <td><div class="hint" style="font-size:11px;">TODO(PAGE-IMP-06): render <?= h($techDocLabel) ?> version history from metadata.</div></td>
+            </tr>
+            <tr>
+              <td>Attachments</td>
+              <td><div class="hint" style="font-size:11px;">TODO(PAGE-IMP-06): render incoming/outgoing attachment history.</div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="flex:1; min-width:320px; margin-top:0;">
+        <div class="row">
+          <h2 class="p-mini-title">State Panel</h2>
+          <div class="hint">State transitions + blockers</div>
+        </div>
+
+        <div style="margin-top:8px;">
+          <div style="font-weight:700;">Confirmed → Execution</div>
+          <div class="hint">Requires issued/locked SCF/SFF/PI depending on stream.</div>
+          <div class="hint" style="font-size:11px;">Required docs: <?= h(count($requiredDocs) ? implode(", ", $requiredDocs) : "None") ?></div>
+          <?php if ($stateNormalized !== "CONFIRMED"): ?>
+            <div class="hint" style="margin-top:6px;">Available when state is Confirmed.</div>
+          <?php else: ?>
+            <?php if (count($confirmedBlockers)): ?>
+              <ul class="hint" style="margin:6px 0 0 18px;">
+                <?php foreach ($confirmedBlockers as $blk): ?>
+                  <li><?= h($blk) ?></li>
+                <?php endforeach; ?>
+              </ul>
+            <?php endif; ?>
+            <form method="post" style="margin-top:8px;">
+              <input type="hidden" name="csrf" value="<?= h($CSRF) ?>">
+              <input type="hidden" name="action" value="transition_state">
+              <input type="hidden" name="id" value="<?= h((string)$pid) ?>">
+              <input type="hidden" name="target_state" value="Execution">
+              <?php
+                $btnDisabled = !$canTransitionToExecution;
+                $btnTitle = $canTransitionToExecution ? "Move to Execution" : "Blocked";
+                if (!($isAdmin || $isManager)) $btnTitle = "Manager/Admin only";
+                if ($stateNormalized !== "CONFIRMED") $btnTitle = "Only valid from Confirmed state";
+                if (count($confirmedBlockers)) $btnTitle = implode("; ", $confirmedBlockers);
+              ?>
+              <button class="btn" type="submit" <?= $btnDisabled ? "disabled" : "" ?> title="<?= h($btnTitle) ?>">Move to Execution</button>
+            </form>
+          <?php endif; ?>
+        </div>
+
+        <div style="margin-top:14px;">
+          <div style="font-weight:700;">Execution → Completed</div>
+          <div class="hint">Requires all linked production days closed (no open runs).</div>
+          <?php if ($stateNormalized !== "EXECUTION"): ?>
+            <div class="hint" style="margin-top:6px;">Available when state is Execution.</div>
+          <?php else: ?>
+            <?php if (count($executionBlockers)): ?>
+              <ul class="hint" style="margin:6px 0 0 18px;">
+                <?php foreach ($executionBlockers as $blk): ?>
+                  <li><?= h($blk) ?></li>
+                <?php endforeach; ?>
+              </ul>
+            <?php endif; ?>
+            <form method="post" style="margin-top:8px;">
+              <input type="hidden" name="csrf" value="<?= h($CSRF) ?>">
+              <input type="hidden" name="action" value="transition_state">
+              <input type="hidden" name="id" value="<?= h((string)$pid) ?>">
+              <input type="hidden" name="target_state" value="Completed">
+              <?php
+                $btn2Disabled = !$canTransitionToCompleted;
+                $btn2Title = $canTransitionToCompleted ? "Move to Completed" : "Blocked";
+                if (!($isAdmin || $isManager)) $btn2Title = "Manager/Admin only";
+                if ($stateNormalized !== "EXECUTION") $btn2Title = "Only valid from Execution state";
+                if (count($executionBlockers)) $btn2Title = implode("; ", $executionBlockers);
+                if (!$productionDataAvailable && $stateNormalized === "EXECUTION") $btn2Title = "Cannot validate open production days (production tables not available)";
+              ?>
+              <button class="btn" type="submit" <?= $btn2Disabled ? "disabled" : "" ?> title="<?= h($btn2Title) ?>">Move to Completed</button>
+            </form>
+          <?php endif; ?>
+        </div>
+
+        <div style="margin-top:14px; border-top:1px solid var(--line); padding-top:10px;">
+          <div class="row" style="align-items:flex-start;">
+            <h2 class="p-mini-title" style="margin:0;">Production Days</h2>
+            <div class="hint">Link to Production Days filtered to this subproject.</div>
+          </div>
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <a class="btn btn-ghost" href="/production_plan?projectId=<?= h((string)$pid) ?>&subproject=<?= h((string)($viewProject["code"] ?? "")) ?>" style="text-decoration:none;">Open Production Plan</a>
+            <a class="btn btn-ghost" href="/production_log?projectId=<?= h((string)$pid) ?>&subproject=<?= h((string)($viewProject["code"] ?? "")) ?>" style="text-decoration:none;">Open Production Log</a>
+          </div>
+          <?php if ($productionDataAvailable): ?>
+            <?php if (count($linkedProductionDays)): ?>
+              <table style="margin-top:10px;">
+                <thead>
+                  <tr>
+                    <th style="width:120px;">Day No.</th>
+                    <th style="width:140px;">Date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($linkedProductionDays as $pd): ?>
+                    <tr>
+                      <td><?= h((string)($pd["dayNo"] ?? "")) ?></td>
+                      <td><?= h((string)($pd["jalaliDate"] ?? "")) ?></td>
+                      <td><?= h((string)($pd["status"] ?? "")) ?></td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            <?php else: ?>
+              <div class="hint" style="margin-top:8px;">No production days linked to this subproject yet.</div>
+            <?php endif; ?>
+          <?php else: ?>
+            <div class="hint" style="margin-top:8px;"><?= h($productionDataNote) ?></div>
+          <?php endif; ?>
+        </div>
+      </div>
     </div>
 
     <?php if ($isAdmin): ?>
@@ -820,7 +1236,7 @@ function toggleGroup(rowId){
           <?php endif; ?>
         </div>
 
-<div class="k"><?= h($techDocLabel) ?></div>
+        <div class="k"><?= h($techDocLabel) ?></div>
         <div class="v">
           <?= h((string)count_files($techDocDir)) ?> file(s)
           <?php if (count($techLatest)): ?>
