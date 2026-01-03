@@ -56,6 +56,7 @@ $routes = [
   'production_log' => APP_ROOT . '/pages/production_log.php',
   'administration' => APP_ROOT . '/pages/administration.php',
   'get_template' => APP_ROOT . '/pages/get_template.php',
+  'inventory' => APP_ROOT . '/pages/inventory.php',
 
     
   // PMA later: 'pma' => APP_ROOT . '/pages/PMA.php',
