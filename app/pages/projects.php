@@ -26,6 +26,7 @@ if (!defined('APP_ROOT')) {
 require_once APP_ROOT . "/includes/auth.php";
 require_once APP_ROOT . "/includes/acl.php";
 require_login();
+require_role(["Admin","Manager","Office","R&D","Customer"]);
 
 /************************************************************
  * SECTION 2 — Shared Layout
@@ -423,7 +424,56 @@ unset($g);
 $groupList = array_values($groups);
 
 /************************************************************
- * SECTION 13 — Detail View (?id=subproject_id)
+ * SECTION 13 — Documents Register Filters (PAGE-IMP-08)
+ ************************************************************/
+$docMetadataAvailable = false;
+$docMetadataNote = "Document metadata table not available. TODO(PAGE-IMP-08): connect query with scope enforcement (project/subproject) before rendering results.";
+
+$docFilters = [
+  "project"     => trim((string)($_GET["doc_project"] ?? "")),
+  "subproject"  => trim((string)($_GET["doc_subproject"] ?? "")),
+  "type"        => trim((string)($_GET["doc_type"] ?? "")),
+  "status"      => trim((string)($_GET["doc_status"] ?? "")),
+  "version"     => trim((string)($_GET["doc_version"] ?? "")),
+  "proposer"    => trim((string)($_GET["doc_proposer"] ?? "")),
+  "confirmer"   => trim((string)($_GET["doc_confirmer"] ?? "")),
+  "issuer"      => trim((string)($_GET["doc_issuer"] ?? "")),
+  "issued_from" => trim((string)($_GET["doc_issued_from"] ?? "")),
+  "issued_to"   => trim((string)($_GET["doc_issued_to"] ?? "")),
+  "search"      => trim((string)($_GET["doc_search"] ?? "")),
+];
+
+$projectOptions = [];
+$subprojectOptions = [];
+foreach ($visible as $p) {
+  $pid = (int)($p["id"] ?? 0);
+  $projLabel = trim((string)($p["projectName"] ?? ""));
+  $code = trim((string)($p["code"] ?? ""));
+  $customerUser = trim((string)($p["customerUsername"] ?? ""));
+  $projectKey = $customerUser . "|" . $code . "|" . $projLabel;
+
+  if (!isset($projectOptions[$projectKey])) {
+    $projectOptions[$projectKey] = [
+      "label" => ($projLabel !== "" ? $projLabel : "Project") . ($code !== "" ? (" (" . $code . ")") : ""),
+      "value" => $projectKey,
+    ];
+  }
+
+  if ($pid > 0) {
+    $subLabel = ($projLabel !== "" ? $projLabel . " — " : "") . ($code !== "" ? $code : ("Subproject " . $pid));
+    $subprojectOptions[$pid] = [
+      "label" => $subLabel,
+      "value" => (string)$pid,
+    ];
+  }
+}
+
+$documentRows = [];
+// TODO(PAGE-IMP-08): Load documents metadata (doc_ref, type, version, status, proposer, confirmer, issuer, timestamps, is_active_issued)
+// from existing storage once available and apply scope filtering (require_project_scope / require_subproject_scope).
+
+/************************************************************
+ * SECTION 14 — Detail View (?id=subproject_id)
  ************************************************************/
 $viewId = (int)($_GET["id"] ?? 0);
 $viewProject = null;
@@ -433,7 +483,7 @@ if ($viewId > 0) {
 }
 
 /************************************************************
- * SECTION 13B — Project View (?projectId=project_id)
+ * SECTION 14B — Project View (?projectId=project_id)
  ************************************************************/
 $projectViewId = (int)($_GET["projectId"] ?? 0);
 $projectView = null;
@@ -472,9 +522,9 @@ if ($projectViewId > 0) {
 }
 
 /************************************************************
- * SECTION 14 — Render
+ * SECTION 15 — Render
  ************************************************************/
-render_header("Projects", $role);
+render_header("Documents Register", $role);
 
 if ($flash_ok)  echo '<div class="flash ok">'.h($flash_ok).'</div>';
 if ($flash_err) echo '<div class="flash err">'.h($flash_err).'</div>';
@@ -504,6 +554,10 @@ tr[data-open="1"] .chev-btn svg{ transform: rotate(180deg); }
 tr[data-open="1"] + tr.subrow{ display:table-row; }
 .subcard{ padding:10px 0 0 0; }
 .mini-pill{ font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid rgba(0,0,0,.08); background:rgba(255,255,255,.55); display:inline-block; }
+.filter-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; align-items:flex-end; }
+.filter-grid label{ display:flex; flex-direction:column; gap:6px; font-weight:600; font-size:13px; color:rgba(0,0,0,.7); }
+.doc-banner{ background:#fff8e1; border:1px solid #f3d27a; padding:6px 10px; border-radius:8px; color:#7a5b00; font-size:12px; margin-top:6px; display:inline-block; }
+.doc-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 </style>
 
 <script>
@@ -514,6 +568,167 @@ function toggleGroup(rowId){
   mainRow.setAttribute("data-open", isOpen ? "0" : "1");
 }
 </script>
+
+<!-- =======================================================
+     SECTION 0 — Documents Register (PAGE-IMP-08)
+     ======================================================= -->
+<div class="card" style="margin-bottom:14px;">
+  <div class="row">
+    <h2 class="p-mini-title" style="margin:0;">Documents Register</h2>
+    <div class="hint">Scope enforced via existing ACL (PAGE-IMP-02). Customers only see their own projects/subprojects.</div>
+  </div>
+
+  <form method="get" class="filter-grid" style="margin-top:10px;">
+    <label>
+      Project
+      <select name="doc_project" style="height:42px;">
+        <option value="">All projects</option>
+        <?php foreach ($projectOptions as $opt): ?>
+          <option value="<?= h((string)$opt["value"]) ?>" <?= ($docFilters["project"] === (string)$opt["value"]) ? "selected" : "" ?>>
+            <?= h((string)$opt["label"]) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <label>
+      Subproject
+      <select name="doc_subproject" style="height:42px;">
+        <option value="">All subprojects</option>
+        <?php foreach ($subprojectOptions as $opt): ?>
+          <option value="<?= h((string)$opt["value"]) ?>" <?= ($docFilters["subproject"] === (string)$opt["value"]) ? "selected" : "" ?>>
+            <?= h((string)$opt["label"]) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <label>
+      Doc type
+      <select name="doc_type" style="height:42px;">
+        <option value="">All</option>
+        <option value="PI" <?= ($docFilters["type"]==="PI")?"selected":"" ?>>PI</option>
+        <option value="SCF" <?= ($docFilters["type"]==="SCF")?"selected":"" ?>>SCF</option>
+        <option value="SFF" <?= ($docFilters["type"]==="SFF")?"selected":"" ?>>SFF</option>
+        <option value="Attachment (Incoming)" <?= ($docFilters["type"]==="Attachment (Incoming)")?"selected":"" ?>>Attachment (Incoming)</option>
+        <option value="Attachment (Outgoing)" <?= ($docFilters["type"]==="Attachment (Outgoing)")?"selected":"" ?>>Attachment (Outgoing)</option>
+      </select>
+    </label>
+    <label>
+      Status
+      <select name="doc_status" style="height:42px;">
+        <option value="">All</option>
+        <option value="Proposed" <?= ($docFilters["status"]==="Proposed")?"selected":"" ?>>Proposed</option>
+        <option value="Confirmed" <?= ($docFilters["status"]==="Confirmed")?"selected":"" ?>>Confirmed</option>
+        <option value="Issued" <?= ($docFilters["status"]==="Issued")?"selected":"" ?>>Issued</option>
+        <option value="Locked" <?= ($docFilters["status"]==="Locked")?"selected":"" ?>>Locked</option>
+        <option value="Archived" <?= ($docFilters["status"]==="Archived")?"selected":"" ?>>Archived</option>
+      </select>
+    </label>
+    <label>
+      Version
+      <input type="text" name="doc_version" value="<?= h($docFilters["version"]) ?>" placeholder="e.g., 1.2" style="height:42px;">
+    </label>
+    <label>
+      Proposer
+      <input type="text" name="doc_proposer" value="<?= h($docFilters["proposer"]) ?>" placeholder="username" style="height:42px;">
+    </label>
+    <label>
+      Confirmer
+      <input type="text" name="doc_confirmer" value="<?= h($docFilters["confirmer"]) ?>" placeholder="username" style="height:42px;">
+    </label>
+    <label>
+      Issuer
+      <input type="text" name="doc_issuer" value="<?= h($docFilters["issuer"]) ?>" placeholder="username" style="height:42px;">
+    </label>
+    <label>
+      Issued from
+      <input type="date" name="doc_issued_from" value="<?= h($docFilters["issued_from"]) ?>" style="height:42px;">
+    </label>
+    <label>
+      Issued to
+      <input type="date" name="doc_issued_to" value="<?= h($docFilters["issued_to"]) ?>" style="height:42px;">
+    </label>
+    <label>
+      Search
+      <input type="text" name="doc_search" value="<?= h($docFilters["search"]) ?>" placeholder="DocRef, type, status" style="height:42px;">
+    </label>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn" type="submit">Apply filters</button>
+      <a class="btn btn-ghost" href="/projects" style="text-decoration:none;">Reset</a>
+    </div>
+  </form>
+
+  <div class="hint" style="margin-top:6px;"><?= h($docMetadataNote) ?></div>
+
+  <table style="margin-top:10px;">
+    <thead>
+      <tr>
+        <th style="width:160px;">DocRef</th>
+        <th style="width:120px;">Type</th>
+        <th style="width:90px;">Version</th>
+        <th style="width:120px;">Status</th>
+        <th style="width:120px;">Active Issued?</th>
+        <th style="width:140px;">Proposer</th>
+        <th style="width:140px;">Confirmer</th>
+        <th style="width:140px;">Issuer</th>
+        <th style="width:140px;">Created At</th>
+        <th style="width:140px;">Confirmed At</th>
+        <th style="width:140px;">Issued At</th>
+        <th style="width:160px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <?php if (empty($documentRows)): ?>
+        <tr>
+          <td colspan="12">
+            <div class="row" style="align-items:center; gap:10px;">
+              <span class="hint">No documents yet.</span>
+              <div class="hint" style="font-size:11px;">TODO(PAGE-IMP-08): query document metadata with scope filters and render rows.</div>
+            </div>
+          </td>
+        </tr>
+      <?php else: ?>
+        <?php foreach ($documentRows as $doc): ?>
+          <?php
+            $docRef   = (string)($doc["doc_ref"] ?? "");
+            $docType  = (string)($doc["type"] ?? "");
+            $version  = (string)($doc["version"] ?? "");
+            $status   = (string)($doc["status"] ?? "");
+            $statusUpper = strtoupper(trim($status));
+            $isActiveIssued = !empty($doc["is_active_issued"]);
+            $createdAt = (string)($doc["created_at"] ?? "");
+            $confirmedAt = (string)($doc["confirmed_at"] ?? "");
+            $issuedAt = (string)($doc["issued_at"] ?? "");
+            $nonIssued = !in_array($statusUpper, ["ISSUED","LOCKED"], true);
+          ?>
+          <tr>
+            <td><?= h($docRef) ?></td>
+            <td><?= h($docType) ?></td>
+            <td><?= h($version) ?></td>
+            <td>
+              <?= h($status) ?>
+              <?php if ($nonIssued): ?>
+                <div class="doc-banner">Not an official issued document</div>
+              <?php endif; ?>
+            </td>
+            <td><?= $isActiveIssued ? "Yes" : "No" ?></td>
+            <td><?= h((string)($doc["proposer"] ?? "")) ?></td>
+            <td><?= h((string)($doc["confirmer"] ?? "")) ?></td>
+            <td><?= h((string)($doc["issuer"] ?? "")) ?></td>
+            <td><?= h($createdAt) ?></td>
+            <td><?= h($confirmedAt) ?></td>
+            <td><?= h($issuedAt) ?></td>
+            <td>
+              <div class="doc-actions">
+                <button class="btn btn-ghost" type="button" disabled title="TODO(PAGE-IMP-08): open metadata view">View metadata</button>
+                <button class="btn btn-ghost" type="button" disabled title="TODO(PAGE-IMP-08): implement scoped download endpoint with filename including status and version (e.g., DOCREF_STATUS_vVERSION)">Download</button>
+              </div>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      <?php endif; ?>
+    </tbody>
+  </table>
+</div>
 
 <!-- =======================================================
      SECTION A — Projects List (Grouped) — NO step/status here
